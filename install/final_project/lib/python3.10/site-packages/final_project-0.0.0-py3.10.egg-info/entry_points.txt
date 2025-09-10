@@ -1,3 +1,0 @@
-[console_scripts]
-train = final_project.train:main
-

@@ -1,0 +1,12 @@
+# Ignore build-related directories
+build/
+install/
+log/
+
+# Ignore Python-specific files and directories
+*.pyc
+__pycache__/
+*.egg-info/
+
+# Ignore the duplicated package folder
+src/Final_project/

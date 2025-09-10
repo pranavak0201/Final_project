@@ -7,11 +7,10 @@ from gymnasium import spaces
 from nav_msgs.msg import Odometry
 from sensor_msgs.msg import LaserScan
 from geometry_msgs.msg import Twist
-from launch.substitutions import LaunchConfiguration
 import time
 
 class Turtlebot3GymEnv(gym.Env, Node):
-    """Gym environment for TurtleBot3 in ROS2 + Gazebo with reset to launch x_pose/y_pose."""
+    """Gym environment for TurtleBot3 in a small 5x5 Gazebo world with randomized goals."""
 
     def __init__(self,
                  node_name='turtlebot3_env_rl',
@@ -20,8 +19,8 @@ class Turtlebot3GymEnv(gym.Env, Node):
                  cmd_topic='/cmd_vel',
                  lidar_dims=360,
                  max_env_steps=500,
-                 x_pose=-2.0,
-                 y_pose=-0.5):
+                 map_size=5.0,        # 5x5 map
+                 safe_margin=0.3):    # keep goal away from walls
 
         rclpy.init(args=None)
         Node.__init__(self, node_name)
@@ -32,16 +31,20 @@ class Turtlebot3GymEnv(gym.Env, Node):
         self.scan_sub = self.create_subscription(LaserScan, scan_topic, self.scan_callback, 10)
 
         # Robot state
-        self.robot_position = np.array([x_pose, y_pose])
+        self.robot_position = np.array([0.0, 0.0])
         self.robot_orientation = 0.0
         self.lidar_data = np.zeros(lidar_dims)
         self.collision = False
 
-        # Start position from launch
-        self.start_position = np.array([x_pose, y_pose])
+        # Start position (0,0)
+        self.start_position = np.array([0.0, 0.0])
+
+        # Map parameters
+        self.map_size = map_size
+        self.safe_margin = safe_margin
 
         # Goal
-        self.goal_position = np.array([1.636, 0.097])  # fixed goal
+        self.goal_position = self._generate_random_goal()
         self.prev_dist_to_goal = None
 
         # Env parameters
@@ -49,9 +52,8 @@ class Turtlebot3GymEnv(gym.Env, Node):
         self.current_step = 0
         self.action_space = spaces.Box(low=np.array([-0.22, -2.84]),
                                        high=np.array([0.22, 2.84]),
-                                       dtype=np.float32)  # linear_x, angular_z
+                                       dtype=np.float32)
 
-        # Observation: LIDAR + distance & angle to goal
         self.observation_space = spaces.Box(low=-np.inf, high=np.inf, shape=(lidar_dims + 3,), dtype=np.float32)
 
         # Wait a little for topics to initialize
@@ -78,19 +80,19 @@ class Turtlebot3GymEnv(gym.Env, Node):
         super().reset(seed=seed)
         self.current_step = 0
         self.collision = False
-        # Reset robot to start position from launch file
+        # Reset robot to start position
         self.robot_position = self.start_position.copy()
+        # Randomize goal
+        self.goal_position = self._generate_random_goal()
         self.prev_dist_to_goal = np.linalg.norm(self.robot_position - self.goal_position)
         obs = self._get_obs()
         return obs, {}
 
     def step(self, action):
         self.current_step += 1
-        # Clip actions
         linear_x = np.clip(action[0], -0.22, 0.22)
         angular_z = np.clip(action[1], -2.84, 2.84)
 
-        # Publish command
         twist = Twist()
         twist.linear.x = float(linear_x)
         twist.angular.z = float(angular_z)
@@ -99,11 +101,9 @@ class Turtlebot3GymEnv(gym.Env, Node):
         # Small delay for physics update
         time.sleep(0.1)
 
-        # Observation
         obs = self._get_obs()
-
-        # Reward
         dist_to_goal = np.linalg.norm(self.robot_position - self.goal_position)
+
         reward = (self.prev_dist_to_goal - dist_to_goal) * 10.0
         self.prev_dist_to_goal = dist_to_goal
 
@@ -119,6 +119,7 @@ class Turtlebot3GymEnv(gym.Env, Node):
 
         return obs, reward, done, False, {}
 
+    # ---------------- Helper functions ----------------
     def _get_obs(self):
         vec_to_goal = self.goal_position - self.robot_position
         dist_to_goal = np.linalg.norm(vec_to_goal)
@@ -126,3 +127,9 @@ class Turtlebot3GymEnv(gym.Env, Node):
         angle_to_goal = np.arctan2(np.sin(angle_to_goal), np.cos(angle_to_goal))
         obs = np.concatenate([self.lidar_data, np.array([dist_to_goal, angle_to_goal, 0.0])])
         return obs.astype(np.float32)
+
+    def _generate_random_goal(self):
+        # Random goal inside map with safe margin
+        goal_x = np.random.uniform(self.safe_margin, self.map_size - self.safe_margin)
+        goal_y = np.random.uniform(self.safe_margin, self.map_size - self.safe_margin)
+        return np.array([goal_x, goal_y])

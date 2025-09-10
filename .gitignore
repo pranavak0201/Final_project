@@ -8,5 +8,4 @@ log/
 __pycache__/
 *.egg-info/
 
-# Ignore the duplicated package folder
-src/Final_project/
+
